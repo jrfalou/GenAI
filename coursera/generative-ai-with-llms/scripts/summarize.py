@@ -118,24 +118,24 @@ if __name__ == '__main__':
 
     # Evaluate the Model Quantitatively (with ROUGE Metric)
     original_eval = get_rouge_results(dataset, model, tokenizer)
+    print(original_eval)
 
     #### fine-tune the model ####
-    # let's make a copy of the model first as it will be modified during fine-tuning
-    model_copy = AutoModelForSeq2SeqLM.from_pretrained(model_name, torch_dtype=torch.bfloat16).to('cuda')
-    full_fine_tune_model(dataset, model_copy, tokenize_function)
-    full_fine_tune_eval = get_rouge_results(dataset, model_copy, tokenizer)
+    fine_tuned_model = full_fine_tune_model(
+        huggingface_dataset_name, model_name, tokenize_function)
+    full_fine_tune_eval = get_rouge_results(dataset, fine_tuned_model, tokenizer)
+    print(full_fine_tune_eval)
 
     ### PEFT (Lora) Model Fine-Tuning ###
-    # let's make a copy of the model first as it will be modified during fine-tuning
-    model_copy = AutoModelForSeq2SeqLM.from_pretrained(model_name, torch_dtype=torch.bfloat16).to('cuda')
-    peft_fine_tune_model(model_copy, dataset, tokenizer, tokenize_function)
-    peft_fine_tune_eval = get_rouge_results(dataset, model_copy, tokenizer)
+    peft_tuned_model = peft_fine_tune_model(huggingface_dataset_name, model_name, tokenizer, tokenize_function)
+    peft_fine_tune_eval = get_rouge_results(dataset, peft_tuned_model, tokenizer)
+    print(peft_fine_tune_eval)
 
     # Prepare this model by adding an adapter to the original FLAN-T5 model.
     # You are setting is_trainable=False because the plan is only to perform inference with this PEFT model.
     # If you were preparing the model for further training, you would set is_trainable=True.
-    peft_model = PeftModel.from_pretrained(
-        model, 
-        './training_data/peft-dialogue-summary-checkpoint-local/',
-        torch_dtype=torch.bfloat16,
-        is_trainable=False)
+    # peft_model = PeftModel.from_pretrained(
+    #     model, 
+    #     './training_data/peft-dialogue-summary-checkpoint-local/',
+    #     torch_dtype=torch.bfloat16,
+    #     is_trainable=False)
