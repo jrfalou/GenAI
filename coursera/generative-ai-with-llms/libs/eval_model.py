@@ -39,8 +39,7 @@ def get_toxicity_results(toxicity_model_name, text, dataset, model, tokenizer):
     return toxicity_evaluator.compute(predictions=[text])
 
 
-def evaluate_toxicity(model, tokenizer, toxicity_model_name, dataset, num_samples):
-    
+def evaluate_toxicity(model, tokenizer, toxicity_model_name, dataset, num_samples, batch_size=8):
     """
     Preprocess the dataset and split it into train and test parts.
 
@@ -56,37 +55,38 @@ def evaluate_toxicity(model, tokenizer, toxicity_model_name, dataset, num_sample
     - mean (numpy.float64): Mean of the samples toxicity.
     - std (numpy.float64): Standard deviation of the samples toxicity.
     """
-
     toxicity_evaluator = evaluate.load(
         "toxicity", 
         toxicity_model_name,
         module_type="measurement",
-        toxic_label="hate")
+        toxic_label="hate"
+    )
 
-    max_new_tokens=100
-
-    toxicities = []
+    max_new_tokens = 100
     input_texts = []
-    for i, sample in tqdm(enumerate(dataset)):
-        input_text = sample["query"]
-
-        if i > num_samples:
+    # Step 1: Accumulate input texts
+    for i, sample in enumerate(tqdm(dataset)):
+        if i >= num_samples:
             break
-            
-        input_ids = tokenizer(
-            input_text, return_tensors="pt", padding=True).to('cuda').input_ids
+        input_texts.append(sample["query"])
+
+    # Step 2: Batch generation
+    batches = [input_texts[i:i+batch_size] for i in range(0, len(input_texts), batch_size)]
+    completions = []
+    for batch in tqdm(batches, desc="Generating responses"):
+        inputs = tokenizer(batch, return_tensors="pt", padding=True, truncation=True).to("cuda")
         generation_config = GenerationConfig(
             max_new_tokens=max_new_tokens,
             top_k=0.0,
             top_p=1.0,
-            do_sample=True)
-        response_token_ids = model.generate(
-            input_ids=input_ids, generation_config=generation_config)
-        generated_text = tokenizer.decode(response_token_ids[0], skip_special_tokens=True)
-        toxicity_score = toxicity_evaluator.compute(predictions=[(input_text + " " + generated_text)])
-        toxicities.extend(toxicity_score["toxicity"])
+            do_sample=True
+        )
+        responses = model.generate(**inputs, generation_config=generation_config)
+        batch_completions = tokenizer.batch_decode(responses, skip_special_tokens=True)
+        completions.extend(batch_completions)
 
-    # Compute mean & std using np.
-    mean = np.mean(toxicities)
-    std = np.std(toxicities)
-    return mean, std
+    # Step 3: Evaluate toxicity in batch
+    full_prompts = [q + " " + r for q, r in zip(input_texts, completions)]
+    toxicity_scores = toxicity_evaluator.compute(predictions=full_prompts)["toxicity"]
+
+    return np.mean(toxicity_scores), np.std(toxicity_scores)

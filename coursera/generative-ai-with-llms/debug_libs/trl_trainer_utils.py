@@ -51,10 +51,9 @@ from transformers.utils import (
     is_torch_npu_available,
     is_torch_xpu_available,
 )
-from transformers.models.roberta.modeling_roberta import RobertaForSequenceClassification
 
 from trl.trainer.model_config import ModelConfig
-from trl.models.modeling_value_head import AutoModelForSeq2SeqLMWithValueHead
+
 
 if is_comet_available():
     import comet_ml
@@ -1151,11 +1150,7 @@ def first_true_indices(bools: torch.Tensor, dtype=torch.long):
 
 
 def get_reward(
-    model: torch.nn.Module,
-    query_responses: torch.Tensor,
-    pad_token_id: int,
-    context_length: int,
-    labels: Optional[torch.Tensor] = None,
+    model: torch.nn.Module, query_responses: torch.Tensor, pad_token_id: int, context_length: int
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Computes the reward logits and the rewards for a given model and query responses.
@@ -1179,42 +1174,20 @@ def get_reward(
             - `sequence_lengths` (`torch.Tensor`):
                 The lengths of the sequences in the query responses.
     """
-    kwargs = {}
-    if isinstance(model, RobertaForSequenceClassification):
-        lm_backbone = model
-        attention_mask = labels != pad_token_id
-        position_ids = attention_mask.cumsum(1) - attention_mask.long()  # exclusive cumsum
-        input_ids = torch.masked_fill(labels, ~attention_mask, 0)
-    else:
-        lm_backbone = getattr(model, model.base_model_prefix)
-        attention_mask = query_responses != pad_token_id
-        position_ids = attention_mask.cumsum(1) - attention_mask.long()  # exclusive cumsum
-        input_ids = torch.masked_fill(query_responses, ~attention_mask, 0)
-        kwargs['use_cache'] = False  # otherwise mistral-based RM would error out
-    if model.config.model_type == "t5":
-        kwargs['labels'] = labels.contiguous() if labels is not None else None
-    else:
-        kwargs['position_ids'] = position_ids
-
+    attention_mask = query_responses != pad_token_id
+    position_ids = attention_mask.cumsum(1) - attention_mask.long()  # exclusive cumsum
+    lm_backbone = getattr(model, model.base_model_prefix)
+    input_ids = torch.masked_fill(query_responses, ~attention_mask, 0)
     output = lm_backbone(
         input_ids=input_ids,
         attention_mask=attention_mask,
+        position_ids=position_ids,
         return_dict=True,
         output_hidden_states=True,
-        **kwargs
+        use_cache=False,  # otherwise mistral-based RM would error out
     )
-
-    if isinstance(model, AutoModelForSeq2SeqLMWithValueHead):
-        # Use decoder hidden states from Seq2Seq output
-        last_decoder_hidden = output.decoder_hidden_states[-1]  # shape: [batch, seq_len, hidden_dim]
-        reward_logits = model.v_head(last_decoder_hidden).squeeze(-1)  # shape: [batch, seq_len]
-        sequence_lengths = first_true_indices(labels == pad_token_id) - 1
-    elif isinstance(model, RobertaForSequenceClassification):
-        reward_logits = output.logits  # = model.classifier(output.hidden_states[-1])
-        sequence_lengths = torch.full((reward_logits.size(0),), 0, device=reward_logits.device)
-    else:
-        reward_logits = model.score(output.hidden_states[-1])
-        sequence_lengths = first_true_indices(query_responses[:, context_length:] == pad_token_id) - 1 + context_length
+    reward_logits = model.score(output.hidden_states[-1])
+    sequence_lengths = first_true_indices(query_responses[:, context_length:] == pad_token_id) - 1 + context_length
     # https://github.com/huggingface/transformers/blob/dc68a39c8111217683bf49a4912d0c9018bab33d/src/transformers/models/gpt2/modeling_gpt2.py#L1454
     return (
         reward_logits,
@@ -1230,7 +1203,6 @@ def forward(
     model: torch.nn.Module,
     query_responses: torch.Tensor,
     pad_token_id: int,
-    labels: Optional[torch.Tensor] = None,
 ) -> torch.nn.Module:
     """
     Performs a forward pass through the model with the given query responses and pad token ID.
@@ -1250,18 +1222,12 @@ def forward(
     attention_mask = query_responses != pad_token_id
     position_ids = attention_mask.cumsum(1) - attention_mask.long()
     input_ids = torch.masked_fill(query_responses, ~attention_mask, 0)
-    kwargs = {}
-    if not isinstance(model, AutoModelForSeq2SeqLMWithValueHead):
-        kwargs["output_hidden_states"] = True
-    if model.config.model_type == "t5":
-        kwargs['labels'] = labels.contiguous() if labels is not None else None
-    else:
-        kwargs["position_ids"] = position_ids
     return model(
         input_ids=input_ids,
         attention_mask=attention_mask,
+        position_ids=position_ids,
         return_dict=True,
-        **kwargs
+        output_hidden_states=True,
     )
 
 
@@ -1378,11 +1344,8 @@ def generate(
         output_scores=True,
     )
     logits = torch.stack(output.scores, 1)
-    # return torch.cat((queries, output.sequences[:, context_length:]), dim=1), logits
-    if output.sequences.shape[1] > logits.shape[1]:
-        output.sequences = output.sequences[:, 1:]
-    return torch.cat((queries, output.sequences), dim=1), logits
-
+    return torch.cat((queries, output.sequences[:, context_length:]), dim=1), logits
+    
 
 @torch.no_grad()
 def batch_generation(

@@ -46,13 +46,11 @@ from transformers.trainer import DEFAULT_CALLBACKS, DEFAULT_PROGRESS_CALLBACK
 from transformers.trainer_callback import CallbackHandler, ExportableState, PrinterCallback
 from transformers.utils import is_peft_available
 
-from trl import AutoModelForSeq2SeqLMWithValueHead
 from trl.core import masked_mean, masked_whiten
 from trl.models import create_reference_model
 from trl.models.utils import unwrap_model_for_generation
 from trl.trainer.ppo_config import PPOConfig
-
-from debug_libs.trl_trainer_utils import (
+from trl.trainer.utils import (
     OnlineTrainerState,
     batch_generation,
     disable_dropout_in_model,
@@ -69,6 +67,7 @@ from debug_libs.trl_trainer_utils import (
     selective_log_softmax,
     truncate_response,
 )
+from debug_libs.modeling_value_head import MyAutoModelForSeq2SeqLMWithValueHead as AutoModelForSeq2SeqLMWithValueHead
 
 
 if is_peft_available():
@@ -92,14 +91,7 @@ class PolicyAndValueWrapper(nn.Module):
 
     def forward(self, **kwargs):
         output = self.critic_backbone(**kwargs)
-        if isinstance(self.value_model, AutoModelForSeq2SeqLMWithValueHead):
-            # Use decoder hidden states from Seq2Seq output
-            last_decoder_hidden = output.decoder_hidden_states[-1]  # shape: [batch, seq_len, hidden_dim]
-            logits = self.value_model.v_head(last_decoder_hidden).squeeze(-1)  # shape: [batch, seq_len]
-        else:
-            logits = self.value_model.score(output.hidden_states[-1])
-        if isinstance(self.policy, AutoModelForSeq2SeqLMWithValueHead):
-            kwargs.pop("output_hidden_states")
+        logits = self.value_model.score(output.hidden_states[-1])
         return self.policy(**kwargs), logits
 
 
@@ -414,7 +406,6 @@ class PPOTrainer(Trainer):
             data = next(iter_dataloader)
             with torch.no_grad():
                 queries = data["input_ids"].to(device)
-                labels = data["labels"].to(device)
                 context_length = queries.shape[1]
                 responses = []
                 postprocessed_responses = []
@@ -436,7 +427,6 @@ class PPOTrainer(Trainer):
 
                 for i in range(0, queries.shape[0], args.local_rollout_forward_batch_size):
                     query = queries[i : i + args.local_rollout_forward_batch_size]
-                    label = labels[i : i + args.local_rollout_forward_batch_size]
                     query_response = query_responses[i : i + args.local_rollout_forward_batch_size]
                     response = query_response[:, context_length:]
                     logits = logitss[i : i + args.local_rollout_forward_batch_size]
@@ -449,11 +439,8 @@ class PPOTrainer(Trainer):
                         with self.null_ref_context():
                             ref_output = forward(model.policy, query_response, processing_class.pad_token_id)
                     else:
-                        ref_output = forward(ref_policy, query_response, processing_class.pad_token_id, labels=response)
-                    if isinstance(ref_policy, AutoModelForSeq2SeqLMWithValueHead):
-                        ref_logits = ref_output[0]
-                    else:
-                        ref_logits = ref_output.logits[:, context_length - 1 : -1]
+                        ref_output = forward(ref_policy, query_response, processing_class.pad_token_id)
+                    ref_logits = ref_output.logits[:, context_length - 1 : -1]
                     ref_logits /= args.temperature + 1e-7
                     ref_logprob = selective_log_softmax(ref_logits, response)
                     del ref_output, ref_logits
@@ -471,15 +458,11 @@ class PPOTrainer(Trainer):
                     sequence_length = first_true_indices(postprocessed_response == processing_class.pad_token_id) - 1
                     unwrapped_value_model = accelerator.unwrap_model(model).value_model
                     full_value, _, _ = get_reward(
-                        unwrapped_value_model, query_response, processing_class.pad_token_id, context_length,
-                        labels=postprocessed_response
+                        unwrapped_value_model, query_response, processing_class.pad_token_id, context_length
                     )
-                    value = (
-                        full_value if isinstance(unwrapped_value_model, AutoModelForSeq2SeqLMWithValueHead)
-                        else full_value[:, context_length - 1 : -1].squeeze(-1))
+                    value = full_value[:, context_length - 1 : -1].squeeze(-1)
                     _, score, _ = get_reward(
-                        reward_model, postprocessed_query_response, processing_class.pad_token_id, context_length,
-                        labels=postprocessed_response
+                        reward_model, postprocessed_query_response, processing_class.pad_token_id, context_length
                     )
 
                     responses.append(response)
@@ -563,20 +546,14 @@ class PPOTrainer(Trainer):
                             mb_return = returns[micro_batch_inds]
                             mb_values = values[micro_batch_inds]
 
-                            output, vpred_temp = forward(
-                                model, mb_query_responses, processing_class.pad_token_id, labels=mb_responses)
-                            if isinstance(model.policy, AutoModelForSeq2SeqLMWithValueHead):
-                                logits = output[0]
-                            else:
-                                logits = output.logits[:, context_length - 1 : -1]
+                            output, vpred_temp = forward(model, mb_query_responses, processing_class.pad_token_id)
+                            logits = output.logits[:, context_length - 1 : -1]
                             logits /= args.temperature + 1e-7
                             new_logprobs = selective_log_softmax(logits, mb_responses)
                             new_logprobs = torch.masked_fill(
                                 new_logprobs, padding_mask[micro_batch_inds], INVALID_LOGPROB
                             )
-                            vpred = (
-                                vpred_temp if isinstance(model.policy, AutoModelForSeq2SeqLMWithValueHead)
-                                else vpred_temp[:, context_length - 1 : -1].squeeze(-1))
+                            vpred = vpred_temp[:, context_length - 1 : -1].squeeze(-1)
                             vpred = torch.masked_fill(vpred, padding_mask_p1[micro_batch_inds], 0)
                             vpredclipped = torch.clamp(
                                 vpred,

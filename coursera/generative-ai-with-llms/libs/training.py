@@ -28,7 +28,7 @@ def full_fine_tune_model(dataset_name, model_name, tokenize_function):
     training_args = TrainingArguments(
         output_dir=os.path.join(
             TRAINING_DATA_PATH,
-            f'full_training-{datetime.strftime(datetime.now(), '%H:%M:%S')}'),
+            f"full_training-{datetime.strftime(datetime.now(), '%H:%M:%S')}"),
         learning_rate=1e-5,
         num_train_epochs=1,
         weight_decay=0.01,
@@ -74,7 +74,7 @@ def peft_fine_tune_model(dataset_name, model_name, tokenizer, tokenize_function)
     peft_training_args = TrainingArguments(
         output_dir=os.path.join(
             TRAINING_DATA_PATH,
-            f'peft_training-{datetime.strftime(datetime.now(), '%H:%M:%S')}'),
+            f"peft_training-{datetime.strftime(datetime.now(), '%H:%M:%S')}"),
         auto_find_batch_size=True,
         learning_rate=1e-3, # Higher learning rate than full fine-tuning.
         # num_train_epochs=1,
@@ -89,7 +89,7 @@ def peft_fine_tune_model(dataset_name, model_name, tokenizer, tokenize_function)
 
     peft_model_path=os.path.join(
         TRAINING_DATA_PATH,
-        f'peft_training_checkpoint-{datetime.strftime(datetime.now(), "%H:%M:%S")}')
+        f"peft_training_checkpoint-{datetime.strftime(datetime.now(), "%H:%M:%S")}")
     peft_trainer.model.save_pretrained(peft_model_path)
     tokenizer.save_pretrained(peft_model_path)
     return peft_trainer.model

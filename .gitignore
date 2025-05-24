@@ -1,4 +1,6 @@
 *.pyc
 *-checkpoint.ipynb
 coursera/generative-ai-with-llms/Labs/*
-coursera/generative-ai-with-llms/training_data/*
+training_data/*
+logs/*
+tmp/*

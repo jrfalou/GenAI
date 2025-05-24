@@ -1,3 +1,4 @@
+import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset, DatasetDict
 
@@ -69,3 +70,13 @@ def build_dataset(model_name,
             with_indices=True, batched=True)
 
     return tokenized_datasets
+
+def compare_model_weights(model1, model2, rtol=1e-5, atol=1e-8):
+    for (name1, param1), (name2, param2) in zip(model1.named_parameters(), model2.named_parameters()):
+        if name1 != name2:
+            print(f"Parameter name mismatch: {name1} != {name2}")
+            return False
+        if not torch.allclose(param1.data, param2.data, rtol=rtol, atol=atol):
+            print(f"Parameter '{name1}' differs.")
+            return False
+    return True
