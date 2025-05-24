@@ -82,7 +82,7 @@ def evaluate_toxicity(model, tokenizer, toxicity_model_name, dataset, num_sample
             do_sample=True
         )
         responses = model.generate(**inputs, generation_config=generation_config)
-        batch_completions = tokenizer.batch_decode(responses, skip_special_tokens=True)
+        batch_completions = tokenizer.batch_decode(responses.sequences, skip_special_tokens=True)
         completions.extend(batch_completions)
 
     # Step 3: Evaluate toxicity in batch

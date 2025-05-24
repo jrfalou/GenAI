@@ -27,6 +27,7 @@ class ValueModelOutput(Seq2SeqLMOutput):
     """
     value: Optional[torch.FloatTensor] = None
     hidden_states: Optional[torch.FloatTensor] = None
+    sequences: Optional[torch.FloatTensor] = None
 
 
 def extract_input_and_output_segments(tensor, pad_token_id=0):
@@ -268,7 +269,9 @@ class MyAutoModelForSeq2SeqLMWithValueHead(AutoModelForSeq2SeqLMWithValueHead):
                 inputs_, labels = extract_input_and_output_segments(kwargs['input_ids'], pad_token_id=0)
             except AssertionError as e:
                 inputs_ = kwargs['input_ids']
-            output.sequences = torch.cat([inputs_, output.sequences[:, 1:]], dim=1)
+        if isinstance(output, torch.Tensor):
+            output = ValueModelOutput(sequences=output)
+        output.sequences = torch.cat([inputs_, output.sequences[:, 1:]], dim=1)
         return output
         
     def score(self, decoder_hidden_states):
