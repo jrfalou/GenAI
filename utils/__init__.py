@@ -19,12 +19,11 @@ def print_number_of_trainable_model_parameters(model):
 
 def build_dataset(model_name,
                   dataset_name,
-                  input_min_text_length, 
-                  input_max_text_length,
                   tokenize_function,
                   dataset_type=None,
                   sub_sample=None,
-                  remove_columns=None):
+                  remove_columns=None,
+                  filter_fn=None):
 
     """
     Preprocess the dataset and split it into train and test parts.
@@ -32,8 +31,6 @@ def build_dataset(model_name,
     Parameters:
     - model_name (str): Tokenizer model name.
     - dataset_name (str): Name of the dataset to load.
-    - input_min_text_length (int): Minimum length of the dialogues.
-    - input_max_text_length (int): Maximum length of the dialogues.
         
     Returns:
     - dataset_splits (datasets.dataset_dict.DatasetDict): Preprocessed dataset containing train and test parts.
@@ -47,9 +44,8 @@ def build_dataset(model_name,
         dataset = DatasetDict({s: d for (s, d) in zip(dataset_type, dataset)})
     
     # Filter the dialogues of length between input_min_text_length and input_max_text_length characters.
-    dataset = dataset.filter(
-        lambda x: [len(dialogue) > input_min_text_length
-        and len(dialogue) <= input_max_text_length for dialogue in x['dialogue']], batched=True)
+    if filter_fn is not None:
+        dataset = dataset.filter(lambda x: filter_fn(x), batched=True)
 
     # Prepare tokenizer. Setting device_map="auto" allows to switch between GPU and CPU automatically.
     tokenizer = AutoTokenizer.from_pretrained(model_name, device_map="auto")
@@ -70,6 +66,7 @@ def build_dataset(model_name,
             with_indices=True, batched=True)
 
     return tokenized_datasets
+
 
 def compare_model_weights(model1, model2, rtol=1e-5, atol=1e-8):
     for (name1, param1), (name2, param2) in zip(model1.named_parameters(), model2.named_parameters()):

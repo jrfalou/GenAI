@@ -12,7 +12,7 @@ from trl import create_reference_model, PPOConfig, PPOTrainer
 from trl.core import LengthSampler
 
 from debug_libs.modeling_value_head import MyAutoModelForSeq2SeqLMWithValueHead, MyT5WithOverrides, ModelWrapper
-from libs.utils import build_dataset, print_number_of_trainable_model_parameters
+from utils import build_dataset, print_number_of_trainable_model_parameters
 from libs.eval_model import evaluate_toxicity
 
 
@@ -33,14 +33,18 @@ if __name__ == '__main__':
     model_name="google/flan-t5-base"
     huggingface_dataset_name = "knkarthick/dialogsum"
 
-    # load dataset (only "train" part will be enough for this lab).    
+    # load dataset (only "train" part will be enough for this lab).
+    def filter_fn(x):
+        # Filter the dialogues of length between input_min_text_length and input_max_text_length characters.
+        return [
+            len(dialogue) > 200
+            and len(dialogue) <= 1000 for dialogue in x['dialogue']]
     dataset = build_dataset(
         model_name=model_name,
         dataset_name=huggingface_dataset_name,
-        input_min_text_length=200, 
-        input_max_text_length=1000,
         tokenize_function=tokenize_function,
-        dataset_type="train")
+        dataset_type="train",
+        filter_fn=filter_fn)
 
     # Split the dataset into train and test parts.
     dataset_splits = dataset['train'].train_test_split(

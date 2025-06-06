@@ -6,9 +6,9 @@ from transformers import (
     AutoModelForSeq2SeqLM, AutoTokenizer, GenerationConfig, TrainingArguments, Trainer)
 from peft import PeftModel, PeftConfig
 
-from libs.utils import print_number_of_trainable_model_parameters
-from libs.training import full_fine_tune_model, peft_fine_tune_model
+from utils import print_number_of_trainable_model_parameters
 from libs.eval_model import get_rouge_results
+from utils.training import full_fine_tune_model, peft_fine_tune_model
 
 
 DASH_LINE = '-'.join('' for x in range(100))

@@ -1,10 +1,11 @@
 import os
+from tqdm import tqdm
 from datetime import datetime
 import torch
 from transformers import TrainingArguments, Trainer, AutoModelForSeq2SeqLM
 from peft import LoraConfig, get_peft_model, TaskType
 
-from libs.utils import build_dataset, print_number_of_trainable_model_parameters
+from utils import build_dataset, print_number_of_trainable_model_parameters
 
 
 TRAINING_DATA_PATH = os.path.join(os.path.dirname(__file__), '..\\training_data')
@@ -28,7 +29,7 @@ def full_fine_tune_model(dataset_name, model_name, tokenize_function):
     training_args = TrainingArguments(
         output_dir=os.path.join(
             TRAINING_DATA_PATH,
-            f"full_training-{datetime.strftime(datetime.now(), '%H:%M:%S')}"),
+            f"full_training-{datetime.strftime(datetime.now(), '%H%M%S')}"),
         learning_rate=1e-5,
         num_train_epochs=1,
         weight_decay=0.01,
@@ -74,7 +75,7 @@ def peft_fine_tune_model(dataset_name, model_name, tokenizer, tokenize_function)
     peft_training_args = TrainingArguments(
         output_dir=os.path.join(
             TRAINING_DATA_PATH,
-            f"peft_training-{datetime.strftime(datetime.now(), '%H:%M:%S')}"),
+            f"peft_training-{datetime.strftime(datetime.now(), '%H%M%S')}"),
         auto_find_batch_size=True,
         learning_rate=1e-3, # Higher learning rate than full fine-tuning.
         # num_train_epochs=1,
@@ -89,7 +90,43 @@ def peft_fine_tune_model(dataset_name, model_name, tokenizer, tokenize_function)
 
     peft_model_path=os.path.join(
         TRAINING_DATA_PATH,
-        f"peft_training_checkpoint-{datetime.strftime(datetime.now(), "%H:%M:%S")}")
+        f"peft_training_checkpoint-{datetime.strftime(datetime.now(), '%H%M%S')}")
     peft_trainer.model.save_pretrained(peft_model_path)
     tokenizer.save_pretrained(peft_model_path)
     return peft_trainer.model
+
+
+def simple_train_model(
+    model, learning_rate, epochs, train_dataloader, valid_dataloader, evaluate_fn
+):
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.01)
+
+    cum_loss_list=[]
+    acc_epoch=[]
+    acc_old=0
+    for epoch in tqdm(range(1, epochs + 1)):
+        model.train()
+        cum_loss=0
+        for idx, data_ in enumerate(train_dataloader):
+            optimizer.zero_grad()
+            label, input_ids = data_['labels'], data_['input_ids']
+            predicted_label = model(input_ids.to('cuda'))
+            loss = criterion(predicted_label, label.to('cuda'))
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
+            optimizer.step()
+            cum_loss+=loss.item()
+        cum_loss_list.append(cum_loss)
+        accu_val = evaluate_fn(model, valid_dataloader)
+        acc_epoch.append(accu_val)
+        # scheduler.step()
+
+        print(f"Epoch {epoch}, Loss: {cum_loss:.4f}, Validation Accuracy: {accu_val:.4f}")
+        if accu_val > acc_old:
+            acc_old = accu_val
+            model_path=os.path.join(
+                TRAINING_DATA_PATH,
+                f"simple_train_model-{datetime.strftime(datetime.now(), '%H%M%S')}.pth")
+            torch.save(model.state_dict(), model_path)
