@@ -1,32 +1,10 @@
 import torch
+from torch import nn
 from datasets import load_dataset
 from transformers import AutoTokenizer, DataCollatorWithPadding
 from torch.utils.data import DataLoader
-from collections import Counter
 
 from utils.training import simple_train_model
-
-
-from torch import nn
-
-
-def build_vocab(dataset, tokenizer):
-    # Build vocabulary from the training set
-    # This is a simple example, in practice you might want to use a more sophisticated tokenizer
-    counter = Counter()
-    for example in dataset['train']:
-        tokens = tokenizer.tokenize(example["text"].lower())
-        counter.update(tokens)
-
-    vocab = {"<unk>": 0}
-    for idx, (token, _) in enumerate(counter.most_common(), start=1):
-        vocab[token] = idx
-
-    # Reverse lookup
-    itos = {idx: token for token, idx in vocab.items()}
-    print(f"Vocabulary size: {len(vocab)}")
-    print(f"Sample tokens: {list(vocab.keys())[:10]}")
-    return vocab, itos
 
 
 def predict(text, tokenizer, model, ag_news_label):

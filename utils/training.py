@@ -119,7 +119,7 @@ def simple_train_model(
             optimizer.step()
             cum_loss+=loss.item()
         cum_loss_list.append(cum_loss)
-        accu_val = evaluate_fn(model, valid_dataloader)
+        accu_val = evaluate_fn(model, valid_dataloader) if evaluate_fn is not None else 0
         acc_epoch.append(accu_val)
         # scheduler.step()
 

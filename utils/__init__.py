@@ -1,6 +1,9 @@
+import re
 import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset, DatasetDict
+from nltk.tokenize import word_tokenize
+from collections import Counter
 
 
 def print_number_of_trainable_model_parameters(model):
@@ -77,3 +80,38 @@ def compare_model_weights(model1, model2, rtol=1e-5, atol=1e-8):
             print(f"Parameter '{name1}' differs.")
             return False
     return True
+
+
+def preprocess_string(s):
+    # Remove all non-word characters (everything except numbers and letters)
+    s = re.sub(r"[^\w\s]", '', s)
+    # Replace all runs of whitespaces with no space
+    s = re.sub(r"\s+", '', s)
+    # replace digits with no space
+    s = re.sub(r"\d", '', s)
+    return s
+
+
+def preprocess_words(words):
+    tokens = word_tokenize(words)
+    tokens = [preprocess_string(w) for w in tokens]
+    return [w.lower() for w in tokens if len(w) != 0 or not(w in string.punctuation)]
+
+
+def build_vocab(dataset, tokenizer):
+    # Build vocabulary from the dataset [{"text": "example text"}]
+    # This is a simple example, in practice you might want to use a more sophisticated tokenizer
+    counter = Counter()
+    for example in dataset:
+        tokens = tokenizer.tokenize(example["text"].lower())
+        counter.update(tokens)
+
+    vocab = {"<unk>": 0}
+    for idx, (token, _) in enumerate(counter.most_common(), start=1):
+        vocab[token] = idx
+
+    # Reverse lookup
+    itos = {idx: token for token, idx in vocab.items()}
+    print(f"Vocabulary size: {len(vocab)}")
+    print(f"Sample tokens: {list(vocab.keys())[:10]}")
+    return lambda x: [vocab[u] for u in x], itos
