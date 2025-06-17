@@ -96,37 +96,104 @@ def peft_fine_tune_model(dataset_name, model_name, tokenizer, tokenize_function)
     return peft_trainer.model
 
 
-def simple_train_model(
-    model, learning_rate, epochs, train_dataloader, valid_dataloader, evaluate_fn
-):
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.01)
+# TODO REMOVE
+# def simple_train_model(
+#     model, learning_rate, epochs, train_dataloader, valid_dataloader, evaluate_fn
+# ):
+#     criterion = torch.nn.CrossEntropyLoss()
+#     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+#     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.01)
 
-    cum_loss_list=[]
-    acc_epoch=[]
-    acc_old=0
-    for epoch in tqdm(range(1, epochs + 1)):
+#     cum_loss_list=[]
+#     acc_epoch=[]
+#     acc_old=0
+#     for epoch in tqdm(range(1, epochs + 1)):
+#         model.train()
+#         cum_loss=0
+#         for idx, data_ in enumerate(train_dataloader):
+#             optimizer.zero_grad()
+#             label, input_ids = data_['labels'], data_['input_ids']
+#             predicted_label = model(input_ids.to('cuda'))
+#             loss = criterion(predicted_label, label.to('cuda'))
+#             loss.backward()
+#             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
+#             optimizer.step()
+#             cum_loss+=loss.item()
+#         cum_loss_list.append(cum_loss)
+#         accu_val = evaluate_fn(model, valid_dataloader) if evaluate_fn is not None else 0
+#         acc_epoch.append(accu_val)
+#         # scheduler.step()
+
+#         print(f"Epoch {epoch}, Loss: {cum_loss:.4f}, Validation Accuracy: {accu_val:.4f}")
+#         if accu_val > acc_old:
+#             acc_old = accu_val
+#             model_path=os.path.join(
+#                 TRAINING_DATA_PATH,
+#                 f"simple_train_model-{datetime.strftime(datetime.now(), '%H%M%S')}.pth")
+#             torch.save(model.state_dict(), model_path)
+
+
+def train_model(
+        model, train_dataloader, optimizer=None, criterion=None, 
+        scheduler=None, clip=0.1, learning_rate=0.1, is_seq2seq=False,
+        valid_dataloader=None, evaluate_fn=None, epochs=1):
+    """
+    Unified training function that handles both general and seq2seq model training.
+    
+    Args:
+        model: PyTorch model to train
+        train_dataloader: DataLoader for training data
+        optimizer: Optimizer for training
+        criterion: Loss function
+        clip: Gradient clipping value (default: 0.1)
+        is_seq2seq: Whether the model is seq2seq (default: False)
+        valid_dataloader: Optional validation dataloader
+        evaluate_fn: Optional evaluation function
+        epochs: Number of epochs to train (default: 1)
+    """
+    criterion = torch.nn.CrossEntropyLoss() if criterion is None else criterion
+    optimizer = (torch.optim.SGD if optimizer is None else optimizer)(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.01) if scheduler is None else scheduler
+
+    best_val_acc = 0
+    for epoch in tqdm(range(1, epochs + 1), desc="Training"):
         model.train()
-        cum_loss=0
-        for idx, data_ in enumerate(train_dataloader):
+        epoch_loss = 0
+        
+        for batch in tqdm(train_dataloader, desc=f"Epoch {epoch}", leave=False):
             optimizer.zero_grad()
-            label, input_ids = data_['labels'], data_['input_ids']
-            predicted_label = model(input_ids.to('cuda'))
-            loss = criterion(predicted_label, label.to('cuda'))
+            
+            label, input_ids = batch['labels'].to('cuda'), batch['input_ids'].to('cuda')
+            if is_seq2seq:
+                output = model(input_ids, label)
+                output = output[1:].flatten(0, 1)
+                label = label[1:].flatten(0, 1)
+            else:
+                output = model(input_ids)
+            
+            loss = criterion(output, label)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
             optimizer.step()
-            cum_loss+=loss.item()
-        cum_loss_list.append(cum_loss)
-        accu_val = evaluate_fn(model, valid_dataloader) if evaluate_fn is not None else 0
-        acc_epoch.append(accu_val)
+            epoch_loss += loss.item()
+        
         # scheduler.step()
-
-        print(f"Epoch {epoch}, Loss: {cum_loss:.4f}, Validation Accuracy: {accu_val:.4f}")
-        if accu_val > acc_old:
-            acc_old = accu_val
-            model_path=os.path.join(
-                TRAINING_DATA_PATH,
-                f"simple_train_model-{datetime.strftime(datetime.now(), '%H%M%S')}.pth")
-            torch.save(model.state_dict(), model_path)
+        avg_loss = epoch_loss / len(train_dataloader)
+        
+        # Validation if provided
+        if valid_dataloader and evaluate_fn:
+            val_acc = evaluate_fn(model, valid_dataloader, criterion, is_seq2seq)
+            eval_loss = val_acc['loss']
+            print(f"Epoch {epoch}, Loss: {avg_loss:.4f}, Validation Loss: {eval_loss:.4f}")
+            
+            # Save best model
+            if eval_loss < best_val_acc:
+                best_val_acc = eval_loss
+                model_path = os.path.join(
+                    TRAINING_DATA_PATH,
+                    f"model_checkpoint-{datetime.strftime(datetime.now(), '%H%M%S')}.pth")
+                torch.save(model.state_dict(), model_path)
+        else:
+            print(f"Epoch {epoch}, Loss: {avg_loss:.4f}")
+    
+    return model

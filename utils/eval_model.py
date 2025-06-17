@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from tqdm import tqdm
 import evaluate
 from transformers import GenerationConfig
@@ -90,3 +91,54 @@ def evaluate_toxicity(model, tokenizer, toxicity_model_name, dataset, num_sample
     toxicity_scores = toxicity_evaluator.compute(predictions=full_prompts)["toxicity"]
 
     return np.mean(toxicity_scores), np.std(toxicity_scores)
+
+
+def evaluate_model(model, eval_dataloader, criterion=None, is_seq2seq=False, metrics=None):
+    """
+    Unified evaluation function that handles both general and seq2seq model evaluation.
+    
+    Args:
+        model: PyTorch model to evaluate
+        eval_dataloader: DataLoader for evaluation data
+        criterion: Loss function (optional)
+        is_seq2seq: Whether the model is seq2seq (default: False)
+        metrics: Dictionary of metric functions to compute (optional)
+    
+    Returns:
+        Dictionary containing evaluation metrics and loss
+    """
+    model.eval()
+    epoch_loss = 0
+    metric_values = {name: 0.0 for name in (metrics or {})}
+    
+    with torch.no_grad():
+        for batch in tqdm(eval_dataloader, desc="Evaluating"):
+            label, input_ids = batch['labels'].to('cuda'), batch['input_ids'].to('cuda')
+            
+            if is_seq2seq:
+                output = model(input_ids, label)
+                output = output[1:].flatten(0, 1)
+                label = label[1:].flatten(0, 1)
+            else:
+                output = model(input_ids)
+            
+            # Calculate loss if criterion is provided
+            if criterion is not None:
+                loss = criterion(output, label)
+                epoch_loss += loss.item()
+            
+            # Calculate additional metrics if provided
+            if metrics:
+                for metric_name, metric_fn in metrics.items():
+                    metric_values[metric_name] += metric_fn(output, label).item()
+    
+    # Average the metrics
+    results = {
+        'loss': epoch_loss / len(eval_dataloader) if criterion is not None else None
+    }
+    
+    if metrics:
+        for metric_name in metrics:
+            results[metric_name] = metric_values[metric_name] / len(eval_dataloader)
+    
+    return results

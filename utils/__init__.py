@@ -1,9 +1,19 @@
 import re
+import random
 import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset, DatasetDict
 from nltk.tokenize import word_tokenize
 from collections import Counter
+
+
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    random.seed(seed)
 
 
 def print_number_of_trainable_model_parameters(model):

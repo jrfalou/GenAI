@@ -4,7 +4,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, DataCollatorWithPadding
 from torch.utils.data import DataLoader
 
-from utils.training import simple_train_model
+from utils.training import train_model
 
 
 def predict(text, tokenizer, model, ag_news_label):
@@ -101,7 +101,8 @@ if __name__ == "__main__":
     print(f"Test accuracy: {test_accuracy:.4f}")
 
     # Set up training parameters
-    simple_train_model(
+    # train_model(
+    train_model(
         model=model,
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,

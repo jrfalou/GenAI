@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
 
-from utils.training import simple_train_model
+from utils.training import train_model
 
 
 # Set the device to GPU if available; otherwise, use CPU
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     print(my_song)  # Print the generated song lyrics
 
     # Train the model
-    simple_train_model(
+    train_model(
         model=model,
         learning_rate=0.001,
         epochs=100000,

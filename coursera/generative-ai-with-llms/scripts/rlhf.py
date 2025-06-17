@@ -13,7 +13,7 @@ from trl.core import LengthSampler
 
 from debug_libs.modeling_value_head import MyAutoModelForSeq2SeqLMWithValueHead, MyT5WithOverrides, ModelWrapper
 from utils import build_dataset, print_number_of_trainable_model_parameters
-from libs.eval_model import evaluate_toxicity
+from utils.eval_model import evaluate_toxicity
 
 
 TRAINING_DATA_PATH = './training_data'

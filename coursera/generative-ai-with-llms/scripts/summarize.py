@@ -7,7 +7,7 @@ from transformers import (
 from peft import PeftModel, PeftConfig
 
 from utils import print_number_of_trainable_model_parameters
-from libs.eval_model import get_rouge_results
+from utils.eval_model import get_rouge_results
 from utils.training import full_fine_tune_model, peft_fine_tune_model
 
 
