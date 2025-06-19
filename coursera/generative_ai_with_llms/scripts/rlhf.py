@@ -11,12 +11,16 @@ from transformers import (
 from trl import create_reference_model, PPOConfig, PPOTrainer
 from trl.core import LengthSampler
 
-from debug_libs.modeling_value_head import MyAutoModelForSeq2SeqLMWithValueHead, MyT5WithOverrides, ModelWrapper
 from utils import build_dataset, print_number_of_trainable_model_parameters
 from utils.eval_model import evaluate_toxicity
 
+# from generative_ai_with_llms.debug_libs.ppo_trainer import PPOTrainer
+from generative_ai_with_llms.libs.modeling_value_head import (
+    MyAutoModelForSeq2SeqLMWithValueHead, MyT5WithOverrides, ModelWrapper)
+
 
 TRAINING_DATA_PATH = './training_data'
+os.environ['DO_PRINT_MEMORY'] = 'False'
 
 
 def tokenize_function(sample, tokenizer):
@@ -79,7 +83,9 @@ if __name__ == '__main__':
     # 3. can merge adapters into the base model for export/inference
     peft_model = PeftModel.from_pretrained(
         model, 
-        'coursera\generative-ai-with-llms\Labs\Lab3\peft-dialogue-summary-checkpoint-from-s3/', 
+        os.path.join(
+            os.path.dirname(__file__), '..', 'Labs', 'Lab3',
+            'peft-dialogue-summary-checkpoint-from-s3'), 
         lora_config=lora_config,
         torch_dtype=torch.bfloat16, 
         device_map="auto",                                       
@@ -159,9 +165,11 @@ if __name__ == '__main__':
             f"ppo_training-{datetime.strftime(datetime.now(), '%H%M%S')}"),
         learning_rate=1.41e-5,
         per_device_train_batch_size=4,
+        # gradient_accumulation_steps=4,
+        # num_mini_batches=4,
         num_train_epochs=4,
         # total_episodes=40,  # max_ppo_steps (10) * batch_size (4)
-        response_length=400,  # max length for generation
+        response_length=200,  # max length for generation
         remove_unused_columns=False,
         logging_steps=10,
         stop_token_id=tokenizer.pad_token_id,  # often 0 for T5
@@ -260,13 +268,13 @@ if __name__ == '__main__':
         summary = ref_model.generate(
             input_ids=torch.as_tensor(prompt_tensors[i]).unsqueeze(dim=0).to('cuda'), 
             **generation_kwargs
-        ).squeeze()[-gen_len_:]
+        ).sequences.squeeze()[prompt_tensors.shape[1]:]
         summary_tensors_ref.append(summary)
 
         summary = ppo_model.generate(
             input_ids=torch.as_tensor(prompt_tensors[i]).unsqueeze(dim=0).to('cuda'), 
             **generation_kwargs
-        ).squeeze()[-gen_len_:]
+        ).sequences.squeeze()[prompt_tensors.shape[1]:]
         summary_tensors.append(summary)
 
     # Decode responses.

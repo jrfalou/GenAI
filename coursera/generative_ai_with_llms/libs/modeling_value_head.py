@@ -4,9 +4,13 @@ from typing import Optional
 from dataclasses import dataclass
 
 from transformers import T5ForConditionalGeneration, AutoConfig, AutoModelForSequenceClassification
+from transformers.generation.logits_process import LogitsProcessorList, SuppressTokensLogitsProcessor
 from transformers.modeling_outputs import Seq2SeqLMOutput
 from trl import AutoModelForSeq2SeqLMWithValueHead
 from trl.trainer.utils import first_true_indices
+
+
+from utils import print_cuda_memory
 
 
 @dataclass
@@ -106,6 +110,7 @@ class MyT5WithOverrides(T5ForConditionalGeneration):
                 kwargs['input_ids'], pad_token_id=self.config.pad_token_id)
             kwargs['labels'] = outputs_
         kwargs.pop('position_ids', None)
+        # print_cuda_memory(function_name='MyT5WithOverrides (forward)')
         output = super().forward(*args, **kwargs)
         if 'input_ids' in kwargs:
             output.logits = torch.cat(
@@ -224,6 +229,7 @@ class MyAutoModelForSeq2SeqLMWithValueHead(AutoModelForSeq2SeqLMWithValueHead):
             kwargs.pop("past_key_values", None)
 
         kwargs.pop('output_hidden_states', None)
+        # print_cuda_memory(function_name='MyAutoModelForSeq2SeqLMWithValueHead (forward)')
         base_model_output = self.pretrained_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -263,7 +269,11 @@ class MyAutoModelForSeq2SeqLMWithValueHead(AutoModelForSeq2SeqLMWithValueHead):
         r"""
         We call `generate` on the wrapped model.
         """
+        if 'logits_processor' not in kwargs:
+            kwargs['logits_processor'] = LogitsProcessorList(
+                [SuppressTokensLogitsProcessor([self.pretrained_model.config.pad_token_id], device='cuda')])
         output = self.pretrained_model.generate(*args, **kwargs)
+        inputs_ = torch.zeros(size=(1, 1), device='cuda')
         if 'input_ids' in kwargs:
             try:
                 inputs_, labels = extract_input_and_output_segments(kwargs['input_ids'], pad_token_id=0)

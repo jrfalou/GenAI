@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "env": {
-                "PYTHONPATH": "${workspaceFolder}/coursera/generative-ai-with-llms;${env:PYTHONPATH}"
+                "PYTHONPATH": "${workspaceFolder}/coursera:${workspaceFolder}:${env:PYTHONPATH}"
             }
         }
     ]

@@ -1,6 +1,8 @@
 import re
 import random
+import os
 import torch
+import pynvml
 from transformers import AutoTokenizer
 from datasets import load_dataset, DatasetDict
 from nltk.tokenize import word_tokenize
@@ -14,6 +16,20 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     random.seed(seed)
+
+
+pynvml.nvmlInit()
+HANDLE = pynvml.nvmlDeviceGetHandleByIndex(0)
+PID = os.getpid()    
+def get_cuda_memory():
+    for p in pynvml.nvmlDeviceGetComputeRunningProcesses(HANDLE):
+        if p.pid == PID:
+            return p.usedGpuMemory / 1024 ** 2
+
+
+def print_cuda_memory(function_name):
+    if os.environ.get('DO_PRINT_MEMORY', 'False') == 'True':
+        print(f"[NVML] {function_name} - Process memory: {get_cuda_memory():.2f} MB")
 
 
 def print_number_of_trainable_model_parameters(model):
@@ -125,3 +141,34 @@ def build_vocab(dataset, tokenizer):
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Sample tokens: {list(vocab.keys())[:10]}")
     return lambda x: [vocab[u] for u in x], itos
+
+
+def estimate_tensor_memory(tensor: torch.Tensor) -> int:
+    if isinstance(tensor, torch.Tensor) and tensor.device.type == 'cuda':
+        return tensor.element_size() * tensor.nelement()
+    return 0
+
+
+def recursive_cuda_memory_estimate(obj) -> int:
+    total_bytes = 0
+
+    if isinstance(obj, torch.Tensor):
+        total_bytes += estimate_tensor_memory(obj)
+
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            total_bytes += recursive_cuda_memory_estimate(item)
+
+    elif isinstance(obj, dict):
+        for value in obj.values():
+            total_bytes += recursive_cuda_memory_estimate(value)
+
+    elif hasattr(obj, '__dict__'):
+        total_bytes += recursive_cuda_memory_estimate(vars(obj))
+
+    return total_bytes
+
+# Usage:
+# memory_bytes = recursive_cuda_memory_estimate(obj)
+# memory_mb = memory_bytes / 1024**2
+# print(f"Estimated CUDA memory usage: {memory_mb:.2f} MB")

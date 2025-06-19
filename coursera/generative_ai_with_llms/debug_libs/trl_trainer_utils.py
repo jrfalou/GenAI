@@ -1,4 +1,4 @@
-# Copyright 2025 The HuggingFace Team. All rights reserved.
+# Copyright 2020-2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,8 +31,6 @@ import torch.utils.data
 from accelerate import Accelerator, PartialState
 from accelerate.state import AcceleratorState
 from huggingface_hub import ModelCard, ModelCardData
-from rich.console import Console
-from rich.table import Table
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import IterableDataset
 from transformers import (
@@ -52,14 +50,24 @@ from transformers.utils import (
     is_torch_xpu_available,
 )
 
+from trl.import_utils import is_rich_available
 from trl.trainer.model_config import ModelConfig
 
+
+if is_rich_available():
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
 
 if is_comet_available():
     import comet_ml
 
 if is_peft_available():
     from peft import LoraConfig, PeftConfig
+
+
+from utils import print_cuda_memory
 
 
 class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
@@ -92,6 +100,11 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
         **kwargs,
     ):
         super().__init__(*args, mlm=mlm, **kwargs)
+        warnings.warn(
+            "This class is deprecated and will be removed in version 0.20.0. To train on completion only, please use "
+            "the parameter `completion_only_loss` of `SFTConfig` instead.",
+            DeprecationWarning,
+        )
 
         self.instruction_template = instruction_template
         if isinstance(instruction_template, str):
@@ -140,7 +153,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
                     warnings.warn(
                         f"Could not find response key `{self.response_template}` in the following instance: "
                         f"{self.tokenizer.decode(batch['input_ids'][i])}. This instance will be ignored in loss "
-                        "calculation. Note, if this happens often, consider increasing the `max_seq_length`.",
+                        "calculation. Note, if this happens often, consider increasing the `max_length`.",
                         UserWarning,
                     )
                     batch["labels"][i, :] = self.ignore_index
@@ -167,7 +180,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
                     warnings.warn(
                         f"Could not find response key `{self.response_template}` in the following instance: "
                         f"{self.tokenizer.decode(batch['input_ids'][i])}. This instance will be ignored in loss "
-                        "calculation. Note, if this happens often, consider increasing the `max_seq_length`.",
+                        "calculation. Note, if this happens often, consider increasing the `max_length`.",
                         UserWarning,
                     )
                     batch["labels"][i, :] = self.ignore_index
@@ -182,7 +195,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
                     warnings.warn(
                         f"Could not find instruction key `{self.instruction_template}` in the following instance: "
                         f"{self.tokenizer.decode(batch['input_ids'][i])}. This instance will be ignored in loss "
-                        "calculation. Note, if this happens often, consider increasing the `max_seq_length`.",
+                        "calculation. Note, if this happens often, consider increasing the `max_length`.",
                         UserWarning,
                     )
                     batch["labels"][i, :] = self.ignore_index
@@ -224,11 +237,11 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
                         flattened_position_ids.size(), device=flattened_position_ids.device, dtype=torch.int32
                     ),
                 )
-            )
+            ).unsqueeze(0)
             batch["cu_seq_lens_k"] = batch["cu_seq_lens_q"]
 
             # Determine maximum sequence lengths to prevent graph breaks during further computations.
-            batch["max_length_k"] = flattened_position_ids.max().item() + 1
+            batch["max_length_k"] = torch.tensor([flattened_position_ids.max().item() + 1])
             batch["max_length_q"] = batch["max_length_k"]
 
         return batch
@@ -589,6 +602,11 @@ class ConstantLengthDataset(IterableDataset):
         append_concat_token=True,
         add_special_tokens=True,
     ):
+        warnings.warn(
+            "This class is deprecated and will be removed in version 0.20.0. To use packing, use the argument "
+            "`packing` of `SFTConfig` instead.",
+            DeprecationWarning,
+        )
         self.tokenizer = tokenizer
         self.concat_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id else eos_token_id
         self.dataset = dataset
@@ -915,6 +933,7 @@ def get_peft_config(model_args: ModelConfig) -> "Optional[PeftConfig]":
         lora_dropout=model_args.lora_dropout,
         bias="none",
         use_rslora=model_args.use_rslora,
+        use_dora=model_args.use_dora,
         modules_to_save=model_args.lora_modules_to_save,
     )
 
@@ -1222,6 +1241,7 @@ def forward(
     attention_mask = query_responses != pad_token_id
     position_ids = attention_mask.cumsum(1) - attention_mask.long()
     input_ids = torch.masked_fill(query_responses, ~attention_mask, 0)
+    # print_cuda_memory(function_name='trainer_utils (forward)')
     return model(
         input_ids=input_ids,
         attention_mask=attention_mask,
@@ -1345,7 +1365,7 @@ def generate(
     )
     logits = torch.stack(output.scores, 1)
     return torch.cat((queries, output.sequences[:, context_length:]), dim=1), logits
-    
+
 
 @torch.no_grad()
 def batch_generation(
@@ -1683,3 +1703,74 @@ def selective_log_softmax(logits, index):
             per_token_logps.append(row_per_token_logps)
         per_token_logps = torch.stack(per_token_logps)
     return per_token_logps
+
+
+def print_prompt_completions_sample(
+    prompts: list[str], completions: list[str], rewards: dict[str, list[float]], step: int, num_samples: int = None
+) -> None:
+    """
+    Print out a sample of model completions to the console with multiple reward metrics.
+
+    This function creates a nicely formatted table showing prompt-completion pairs, useful for monitoring model outputs
+    during training. It requires the `rich` library to be installed.
+
+    Args:
+        prompts (`list[str]`):
+            List of prompts.
+        completions (`list[str]`):
+            List of completions corresponding to the prompts.
+        rewards (`dict[str, list[float]]`):
+            Dictionary where keys are reward names and values are lists of rewards.
+        step (`int`):
+            Current training step number, used in the output title.
+        num_samples (`int` or `None`, *optional*, defaults to `None`):
+            Number of random samples to display. If `None` (default), all items will be displayed.
+
+    Example:
+    ```python
+    >>> from trl.trainer.utils import print_prompt_completions_sample
+    >>> prompts = ["The sky is", "The sun is"]
+    >>> completions = [" blue.", " in the sky."]
+    >>> rewards = {"Correctness": [0.123, 0.456], "Format": [0.789, 0.101]}
+    >>> print_prompt_completions_sample(prompts, completions, rewards, 42)
+    ╭────────────────────── Step 42 ───────────────────────╮
+    │ ┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━┓ │
+    │ ┃ Prompt     ┃ Completion   ┃ Correctness ┃ Format ┃ │
+    │ ┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━┩ │
+    │ │ The sky is │  blue.       │        0.12 │   0.79 │ │
+    │ ├────────────┼──────────────┼─────────────┼────────┤ │
+    │ │ The sun is │  in the sky. │        0.46 │   0.10 │ │
+    │ └────────────┴──────────────┴─────────────┴────────┘ │
+    ╰──────────────────────────────────────────────────────╯
+    ```
+    """
+    console = Console()
+    table = Table(show_header=True, header_style="bold white", expand=True)
+
+    # Add columns
+    table.add_column("Prompt", style="bright_yellow")
+    table.add_column("Completion", style="bright_green")
+    for reward_name in rewards.keys():
+        table.add_column(reward_name, style="bold cyan", justify="right")
+
+    # Some basic input validation
+    if num_samples is not None:
+        if num_samples >= len(prompts):
+            num_samples = None
+        elif num_samples <= 0:
+            return
+
+    # Subsample data if num_samples is specified
+    if num_samples is not None:
+        indices = random.sample(range(len(prompts)), num_samples)
+        prompts = [prompts[i] for i in indices]
+        completions = [completions[i] for i in indices]
+        rewards = {key: [val[i] for i in indices] for key, val in rewards.items()}
+
+    for i in range(len(prompts)):
+        reward_values = [f"{rewards[key][i]:.2f}" for key in rewards.keys()]  # 2 decimals
+        table.add_row(Text(prompts[i]), Text(completions[i]), *reward_values)
+        table.add_section()  # Adds a separator between rows
+
+    panel = Panel(table, expand=False, title=f"Step {step}", border_style="bold white")
+    console.print(panel)
